@@ -6,147 +6,182 @@
  */
 angular.module('hateoas', ['ngResource'])
 
-  .provider('HateoasInterface', function () {
+    .provider('HateoasInterface', function () {
 
-    // global Hateoas settings
-    var globalHttpMethods,
-      linksKey = 'links';
+      // global Hateoas settings
+      var globalHttpMethods,
+          linksKey = 'links', collectionPropertyKey = "items", delimiteOfTokenStart = "{", delimiteOfTokenEnd = "}";
 
-    return {
+      return {
 
-      setLinksKey: function (newLinksKey) {
-        linksKey = newLinksKey || linksKey;
-      },
+        setCollectionPropertyKey: function (newCollectionPropertyKey) {
+          collectionPropertyKey = newCollectionPropertyKey || collectionPropertyKey;
+        },
 
-      getLinksKey: function () {
-        return linksKey;
-      },
+        getCollectionPropertyKey: function () {
+          return collectionPropertyKey;
+        },
 
-      setHttpMethods: function (httpMethods) {
-        globalHttpMethods = angular.copy(httpMethods);
-      },
 
-      $get: ['$injector', '$q', '$log', function ($injector, $q, $log) {
+        setLinksKey: function (newLinksKey) {
+          linksKey = newLinksKey || linksKey;
+        },
 
-        var arrayToObject = function (object) {
-          var obj = object;
+        getLinksKey: function () {
+          return linksKey;
+        },
 
-          Object.keys(object).forEach(function (prop) {
+        setHttpMethods: function (httpMethods) {
+          globalHttpMethods = angular.copy(httpMethods);
+        },
 
-            if (angular.isArray(object[prop])) {
-              object[prop].forEach(function (item, key) {
-                obj[prop][key] = item['href'] || item;
-              });
-            }
-            else if (angular.isObject(object[prop])) {
-              obj[prop] = object[prop]['href'];
-            }
+        $get: ['$injector', '$q', '$log', function ($injector, $q, $log) {
 
-          });
+          /*var arrayToObject = function (object) {
+           var obj = object;
 
-          return obj;
-        };
+           Object.keys(object).forEach(function (prop) {
 
-        var resource = function (linkName, bindings, httpMethods) {
+           if (angular.isArray(object[prop])) {
+           object[prop].forEach(function (item, key) {
+           obj[prop][key] = item['href'] || item;
+           });
+           }
+           else if (angular.isObject(object[prop])) {
+           obj[prop] = object[prop]['href'];
+           }
 
-          if (linkName in this[linksKey]) {
+           });
 
-            var links = this[linksKey][linkName];
+           return obj;
+           };*/
 
-            if (/(.png)/g.test(this[linksKey])) {
-              var defer = $q.defert();
-              $q.resolve(this[linksKey]);
-              return defer.promise;
-            }
-
-            if (!angular.isArray(links)) {
-              links = [links];
+          var collection = function(linkName, bindings, httpMethods){
+            if(!this[linksKey][linkName]){
+              throw "Relation not found "+linkName;
             }
 
-            var injectedResource = $injector.get('$resource');
-            var promiseAll = $q.all(links.map(function (link) {
-
-              // special treatment for images
-              if(link.type && link.type.indexOf('image') >= 0) {
-                link.get = function() {
-                  return this;
+            var me = this, injectedResource = $injector.get('$resource'), promises = [], template = this[linksKey][linkName]['href'], tokens = (template.match(/\{([\w_.-]+)\}/g)||[]).map(function(m){return m.replace(/({|})/g, '');}).map(function(prop){  return prop; });
+            me[collectionPropertyKey].forEach(function(item){
+              var computedUrl = template;
+              tokens.forEach(function(token){
+                if(item[token] !== undefined){
+                  computedUrl = computedUrl.replace(delimiteOfTokenStart+token+delimiteOfTokenEnd, item[token]);
                 }
-                return link;
-              }
+              });
 
-              return injectedResource(link.href, bindings, httpMethods || globalHttpMethods);
-
-            })).then(function (resources) {
-
-              if (resources.length > 1) {
-                return resources.map(function (resource) {
-                  return resource.get();
-                });
-              }
-              else if (resources.length === 1) {
-                return resources.pop().get();
-              }
-
+              promises.push(injectedResource(computedUrl, bindings, httpMethods || globalHttpMethods).get());
             });
 
-            return promiseAll;
+            return $q.all(promises).then(function(items){
+              me[collectionPropertyKey] = items;
+            });
+          }, resource = function (linkName, bindings, httpMethods) {
 
-          } else {
-            throw 'Link "' + linkName + '" is not present in object.';
-          }
-        };
+            if (linkName in this[linksKey]) {
 
-        var HateoasInterface = function (data) {
+              var links = this[linksKey][linkName];
 
-          // if links are present, consume object and convert links
-          if (data[linksKey]) {
-            var links = {};
-            //links[linksKey] = arrayToObject(data[linksKey]);
-            data = angular.extend(this, data, links, {resource: resource});
-          }
+              if (/(.png)/g.test(this[linksKey])) {
+                var defer = $q.defert();
+                $q.resolve(this[linksKey]);
+                return defer.promise;
+              }
 
-          // recursively consume all contained arrays or objects with links
-          angular.forEach(data, function (value, key) {
-            if (key !== linksKey && angular.isObject(value) && (angular.isArray(value) || value[linksKey])) {
-              data[key] = new HateoasInterface(value);
+              if (!angular.isArray(links)) {
+                links = [links];
+              }
+
+              var injectedResource = $injector.get('$resource');
+
+              // transforme chaque item de _links en "Resource"
+              var promiseAll = $q.all(links.map(function (link) {
+
+                // special treatment for images
+                if(link.type && link.type.indexOf('image') >= 0) {
+                  link.get = function() {
+                    return this;
+                  }
+                  return link;
+                }
+
+                return injectedResource(link.href, bindings, httpMethods || globalHttpMethods);
+
+              })).then(function (resources) {
+
+                if (resources.length > 1) {
+                  return resources.map(function (resource) {
+                    return resource.get();
+                  });
+                }
+                else if (resources.length === 1) {
+                  return resources.pop().get();
+                }
+
+              });
+
+              return promiseAll;
+
+            } else {
+              throw 'Link "' + linkName + '" is not present in object.';
             }
-          });
+          };
 
-          return data;
-
-        };
-
-        return HateoasInterface;
-
-      }]
-
-    };
-
-  })
-
-  .provider('HateoasInterceptor', ['$httpProvider', function ($httpProvider) {
-
-    return {
-
-      transformAllResponses: function () {
-        $httpProvider.interceptors.push('HateoasInterceptor');
-      },
-
-      $get: ['HateoasInterface', '$q', function (HateoasInterface, $q) {
-
-        return {
-          response: function (response) {
-
-            if (response && angular.isObject(response.data)) {
-              response.data = new HateoasInterface(response.data);
+          var HateoasInterface = function (data, isRoot) {
+            if(isRoot){
+              data = angular.extend(data, {'collection': collection});
             }
 
-            return response || $q.when(response);
+            // if links are present, consume object and convert links
+            if (data[linksKey]) {
+              var links = {};
+              //links[linksKey] = arrayToObject(data[linksKey]);
 
-          }
-        };
-      }]
+              data = angular.extend(this, data, links, {resource: resource});
+            }
 
-    };
+            // recursively consume all contained arrays or objects with links
+            angular.forEach(data, function (value, key) {
+              if (key !== linksKey && angular.isObject(value) && (angular.isArray(value) || value[linksKey])) {
+                data[key] = new HateoasInterface(value);
+              }
+            });
 
-  }]);
+            return data;
+
+          };
+
+          return HateoasInterface;
+
+        }]
+
+      };
+
+    })
+
+    .provider('HateoasInterceptor', ['$httpProvider', function ($httpProvider) {
+
+      return {
+
+        transformAllResponses: function () {
+          $httpProvider.interceptors.push('HateoasInterceptor');
+        },
+
+        $get: ['HateoasInterface', '$q', function (HateoasInterface, $q) {
+
+          return {
+            response: function (response) {
+
+              if (response && angular.isObject(response.data)) {
+                response.data = new HateoasInterface(response.data, true);
+              }
+
+              return response || $q.when(response);
+
+            }
+          };
+        }]
+
+      };
+
+    }]);
