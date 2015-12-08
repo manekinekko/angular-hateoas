@@ -1,10 +1,10 @@
 {
   "name": "angular-hateoas",
   "description": "An AngularJS module for using $resource with a HATEOAS-enabled REST API.",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jmarquis/angular-hateoas.git"
+    "url": "https://github.com/manekinekko/angular-hateoas.git"
   },
   "main": "src/angular-hateoas.js",
   "devDependencies": {
