@@ -56,12 +56,59 @@ angular.module('hateoas', ['ngResource'])
            return obj;
            };*/
 
-          var collection = function(linkName, bindings, httpMethods){
+          function parseUrlTokens(url){
+            return (url.match(/\{([\w_.-]+)\}/g)||[]).map(function(m){return m.replace(/({|})/g, '');}).map(function(prop){  return prop; });
+          }
+
+          var collection = function(attrName, linkName, bindings, httpMethods){
             if(!this[linksKey][linkName]){
-              throw "Relation not found "+linkName;
+              throw "Relation not found '"+linkName+"'";
+            }
+            if(!this[linksKey][linkName]['templated']){
+              throw "Relation '"+linkName+"' must be templated";
             }
 
-            var me = this, injectedResource = $injector.get('$resource'), promises = [], template = this[linksKey][linkName]['href'], tokens = (template.match(/\{([\w_.-]+)\}/g)||[]).map(function(m){return m.replace(/({|})/g, '');}).map(function(prop){  return prop; });
+            var me = this,
+                injectedResource = $injector.get('$resource'),
+                promises = [],
+                aToken = null,
+                template = this[linksKey][linkName]['href'],
+                tokens = parseUrlTokens(template);
+            me[attrName].forEach(function(item){
+              var computedUrl = template;
+              if(tokens.length === 1){
+                aToken = tokens[0];
+                if(item[aToken]) { // l'attribut "aToken" est disponible sur l'item
+                  computedUrl = computedUrl.replace(delimiteOfTokenStart + aToken + delimiteOfTokenEnd, item[aToken]);
+                }else{
+                  computedUrl = computedUrl.replace(delimiteOfTokenStart + aToken + delimiteOfTokenEnd, item);
+                }
+              }else{
+                tokens.forEach(function(token){
+                  if(item[token] !== undefined){
+                    computedUrl = computedUrl.replace(delimiteOfTokenStart+token+delimiteOfTokenEnd, item[token]);
+                  }
+                });
+              }
+
+              promises.push(injectedResource(computedUrl, bindings, httpMethods || globalHttpMethods));
+            });
+
+            return $q.all(promises).then(function(elements){
+              elements.forEach(function(el, key){
+                elements[key] = el.get();
+              });
+              return elements;
+            });
+          }, items = function(linkName, bindings, httpMethods){
+            if(!this[linksKey][linkName]){
+              throw "Relation not found '"+linkName+"'";
+            }
+            if(!this[linksKey][linkName]['templated']){
+              throw "Relation '"+linkName+"' must be templated";
+            }
+
+            var me = this, injectedResource = $injector.get('$resource'), promises = [], template = this[linksKey][linkName]['href'], tokens = parseUrlTokens(template);
             me[collectionPropertyKey].forEach(function(item){
               var computedUrl = template;
               tokens.forEach(function(token){
@@ -70,11 +117,14 @@ angular.module('hateoas', ['ngResource'])
                 }
               });
 
-              promises.push(injectedResource(computedUrl, bindings, httpMethods || globalHttpMethods).get());
+              promises.push(injectedResource(computedUrl, bindings, httpMethods || globalHttpMethods));
             });
 
             return $q.all(promises).then(function(items){
-              me[collectionPropertyKey] = items;
+              items.forEach(function(item, key){
+                items[key] = item.get();
+              });
+              return items;
             });
           }, resource = function (linkName, bindings, httpMethods) {
 
@@ -129,8 +179,9 @@ angular.module('hateoas', ['ngResource'])
 
           var HateoasInterface = function (data, isRoot) {
             if(isRoot){
-              data = angular.extend(data, {'collection': collection});
+              data = angular.extend(data, {'getItems': items});
             }
+            data = angular.extend(data, {'getCollection': collection});
 
             // if links are present, consume object and convert links
             if (data[linksKey]) {
